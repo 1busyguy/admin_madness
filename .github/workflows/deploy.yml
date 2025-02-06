@@ -1,0 +1,62 @@
+name: Deploy React Webapp
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm -g i pnpm
+        
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Build the React app
+        run: pnpm run build
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Install rsync on Droplet
+        run: |
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_HOST }} "apt-get update && apt-get install -y rsync"
+
+      - name: Copy files via rsync
+        run: |
+          rsync -avz --delete-after -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '.gitignore' \
+            --exclude '.github' \
+            . root@${{ secrets.SERVER_HOST }}:/~/
+
+      - name: Archive production artifacts
+        run: tar -czf build.tar.gz build
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cp -r /~/build/* /var/www/html/
+
+
+      - name: Install serve
+        run: npm install -g serve
